@@ -142,8 +142,11 @@ def send_to_kommo(lead_data):
         # URL da API do Kommo
         url = f"https://{KOMMO_CONFIG['subdomain']}.kommo.com/api/v4/leads"
         
+        # Limpar o token (remover espaços e quebras de linha )
+        clean_token = KOMMO_CONFIG['access_token'].strip()
+        
         headers = {
-            'Authorization': f"Bearer {KOMMO_CONFIG['access_token']}",
+            'Authorization': f"Bearer {clean_token}",
             'Content-Type': 'application/json'
         }
         
@@ -151,7 +154,6 @@ def send_to_kommo(lead_data):
         lead_payload = {
             'name': f"Lead {lead_data['portal']} - {lead_data['name']}",
             'price': 0,
-            'custom_fields_values': [],
             '_embedded': {
                 'contacts': [{
                     'name': lead_data['name'],
@@ -165,7 +167,7 @@ def send_to_kommo(lead_data):
             lead_payload['_embedded']['contacts'][0]['custom_fields_values'].append({
                 'field_code': 'PHONE',
                 'values': [{'value': lead_data['phone'], 'enum_code': 'WORK'}]
-            } )
+            })
         
         # Adicionar email ao contato se disponível
         if lead_data['email']:
@@ -207,7 +209,7 @@ def send_to_kommo(lead_data):
         else:
             return {
                 'success': False,
-                'error': f'Erro na API do Kommo: {response.status_code}'
+                'error': f'Erro na API do Kommo: {response.status_code} - {response.text}'
             }
             
     except Exception as e:
@@ -261,7 +263,10 @@ def home():
         'status': 'online',
         'endpoints': {
             'health': '/health',
-            'test': '/test'
+            'test': '/test',
+            'webhook_kommo': '/webhook/kommo',
+            'webhook_email': '/webhook/email',
+            'manual_lead': '/manual-lead'
         }
     })
 
@@ -293,6 +298,95 @@ def test():
         'kommo_result': kommo_result,
         'status': 'test_completed'
     })
+
+@app.route('/webhook/kommo', methods=['POST'])
+def kommo_webhook():
+    """Recebe webhooks do Kommo"""
+    try:
+        data = request.get_json()
+        logger.info(f"Webhook recebido do Kommo: {data}")
+        
+        # Log para debug
+        return jsonify({
+            'status': 'received',
+            'message': 'Webhook processado com sucesso',
+            'data': data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Erro no webhook do Kommo: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/webhook/email', methods=['POST'])
+def email_webhook():
+    """Processa emails e cria leads no Kommo"""
+    try:
+        data = request.get_json()
+        
+        # Extrair dados do email
+        sender = data.get('sender', '')
+        subject = data.get('subject', '')
+        content = data.get('content', '')
+        
+        # Processar conteúdo do email
+        lead_data = process_email_content(sender, subject, content)
+        
+        if lead_data:
+            # Tentar enviar para Kommo
+            kommo_result = send_to_kommo(lead_data)
+            
+            return jsonify({
+                'status': 'success',
+                'lead_data': lead_data,
+                'kommo_result': kommo_result
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Não foi possível processar o email'
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Erro no webhook de email: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/manual-lead', methods=['POST'])
+def create_manual_lead():
+    """Cria lead manualmente para teste"""
+    try:
+        # Dados de exemplo para teste
+        lead_data = {
+            'portal': 'Teste Manual',
+            'source': 'teste@exemplo.com',
+            'name': 'Cliente Teste',
+            'phone': '11999999999',
+            'email': 'cliente@teste.com',
+            'vehicle_interest': 'Carro de Teste',
+            'whatsapp': '11999999999'
+        }
+        
+        # Enviar para Kommo
+        kommo_result = send_to_kommo(lead_data)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Lead de teste criado',
+            'lead_data': lead_data,
+            'kommo_result': kommo_result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Erro ao criar lead manual: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
